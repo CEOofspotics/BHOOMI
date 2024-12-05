@@ -1,68 +1,45 @@
-#include <WiFi.h>
-#include <ArduinoIoTCloud.h>
-#include <Arduino_ConnectionHandler.h>
 
-// WiFi 
-const char SSID[]     = "Your_WiFi_Name";
-const char PASS[]     = "Your_WiFi_Password";
-
-float pHValue;  // Variable to send pH value to the cloud
-String recommendation;  // Recommendation message for the farmer
+arduinoPort = "COM3";  (* Comm 3 is my port but you have to replace it with your own *)
 
 
-String cropType = "wheat";  // Set crop type here or get it from the cloud
+arduino = DeviceOpen["Serial", {arduinoPort, "BaudRate" -> 9600}];
+
+(* thsi funvtion reads the ph data *)
+readPHValue[] := Module[{data, pH},
+  data = StringTrim[DeviceReadBuffer[arduino]];
+  If[StringLength[data] > 0,
+    Quiet[
+      pH = ToExpression[data];
+      If[NumericQ[pH], pH, Missing["InvalidData"]],
+      {ToExpression::notnum}
+    ],
+    Missing["NoData"]
+  ]
+];
+
+(* this funcbtion generates nutrient recommendation *)
+generateRecommendation[pH_, crop_] := Which[
+  crop == "wheat" && pH < 6.5, "Add nitrogen-rich fertiliser.",
+  crop == "wheat" && pH > 7.5, "Soil is too alkaline, reduce lime.",
+  crop == "wheat", "Soil is optimal for wheat.",
+  crop == "rice" && pH < 6.0, "Add phosphorus-rich fertiliser.",
+  crop == "rice" && pH > 7.0, "Soil is too alkaline, consider manure.",
+  crop == "rice", "Soil is optimal for rice.",
+  True, "Crop not supported."
+];
+
+(* thisx is the loop that proccs the data  *)
+cropType = "wheat";  (* Set your crop type here *)
+
+While[True,
+  pHValue = readPHValue[];
+  If[pHValue =!= Missing["NoData"] && pHValue =!= Missing["InvalidData"],
+    recommendation = generateRecommendation[pHValue, cropType];
+    Print[DateString[], " - pH Value: ", pHValue];
+    Print["Recommendation: ", recommendation];
+  ];
+  Pause[2]; 
+]
 
 
-#define pHSensorPin A0
-
-
-const char THING_ID[] = "Your_Thing_ID";
-WiFiConnectionHandler ArduinoIoTPreferredConnection(SSID, PASS);
-
-void setup() {
-  Serial.begin(115200);
-  pinMode(pHSensorPin, INPUT);
-
-  
-  ArduinoCloud.begin(ArduinoIoTPreferredConnection);
-  setDebugMessageLevel(2);
-  ArduinoCloud.printDebugInfo();
-
-  
-  ArduinoCloud.addProperty(pHValue, READ, ON_CHANGE, NULL);
-  ArduinoCloud.addProperty(recommendation, READ, ON_CHANGE, NULL);
-}
-
-void loop() {
-  ArduinoCloud.update();
-
-  // Read and calculate pH
-  int sensorValue = analogRead(pHSensorPin);
-  float voltage = (sensorValue / 4095.0) * 3.3;  // ESP32 has 12-bit ADC
-  pHValue = -5.0 * voltage + 16.0;  // Calibration formula (adjust based on sensor)
-
-  // genares remcomedation
-  recommendation = generateRecommendation(pHValue, cropType);
-
-  // Debug
-  Serial.print("pH Value: ");
-  Serial.println(pHValue);
-  Serial.print("Recommendation: ");
-  Serial.println(recommendation);
-
-  delay(2000);
-}
-
-// Function to generate nutrient recommendation
-String generateRecommendation(float pH, String crop) {
-  if (crop == "wheat") {
-    if (pH < 6.5) return "Add nitrogen-rich fertiliser.";
-    if (pH > 7.5) return "Soil is too alkaline, reduce lime.";
-    return "Soil is optimal for wheat.";
-  } else if (crop == "rice") {
-    if (pH < 6.0) return "Add phosphorus-rich fertiliser.";
-    if (pH > 7.0) return "Soil is too alkaline, consider manure.";
-    return "Soil is optimal for rice.";
-  }
-  return "Crop not supported.";
-}
+DeviceClose[arduino];
